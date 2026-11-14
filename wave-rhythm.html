@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Wave Rhythm</title>
+<style>
+:root{color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#0e1018;--fg:#e8eaf2;--mut:#8a90a6}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,sans-serif}
+body{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:8px}
+canvas{width:100%;max-width:960px;aspect-ratio:16/9;background:#151827;border-radius:12px;touch-action:none}
+.pads{display:flex;gap:12px;width:100%;max-width:960px}
+.pads button{flex:1;padding:18px;font-size:22px;font-weight:700;border:0;border-radius:12px;color:#fff;touch-action:manipulation}
+#pr{background:#d6403f}#pb{background:#3f6fe0}
+p{margin:0;color:var(--mut);font-size:14px;text-align:center}
+</style>
+</head>
+<body>
+<canvas id="c" width="960" height="540"></canvas>
+<div class="pads"><button id="pr">R</button><button id="pb">B</button></div>
+<p>Press <b>R</b> when a red square crosses the line and <b>B</b> for blue. Space/Enter or click to start.</p>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const W=960,H=540,LY=270,A=130,V=300,BPM=100,T=60/BPM,LAM=2*V*T,WIN=0.18,SAFE=160;
+const COL={r:'#ff4d4d',b:'#4d7dff'};
+let state='menu',t0=0,ps=[],fx=[],held={r:false,b:false},nextCross,lastBeat,score,combo,best,hp,hits,total,audio;
+
+function now(){return (performance.now()-t0)/1000}
+function tick(f,len,vol){try{audio=audio||new (window.AudioContext||window.webkitAudioContext)();
+ const o=audio.createOscillator(),g=audio.createGain();o.frequency.value=f;g.gain.value=vol;
+ g.gain.exponentialRampToValueAtTime(0.001,audio.currentTime+len);o.connect(g);g.connect(audio.destination);o.start();o.stop(audio.currentTime+len)}catch(e){}}
+
+function start(){state='play';t0=performance.now();ps=[];fx=[];score=0;combo=0;best=0;hp=8;hits=0;total=0;
+ nextCross=2.4;lastBeat=-1;tick(600,.05,.05)}
+
+function spawn(t){
+ while(nextCross-1.5*T<=t){
+  const n=[3,3,3,2,4,1][Math.floor(Math.random()*6)];
+  ps.push({c:Math.random()<.5?'r':'b',spawn:nextCross-1.5*T,idx:0,rem:n,done:null});
+  nextCross+=n*T+(Math.random()<.4?T:0);
+ }
+}
+const cross=p=>p.spawn+1.5*T+p.idx*T;
+const pos=(p,t)=>{const s=V*(t-p.spawn),d=p.c==='r'?1:-1;return {x:-20+s,y:LY-d*A*Math.cos(2*Math.PI*s/LAM)}};
+
+function say(text,color,p,t){const q=pos(p,t);fx.push({text,color,x:Math.max(40,q.x),t})}
+function press(k){
+ if(state!=='play')return;const t=now();let best_=null,bd=WIN;
+ for(const p of ps)if(p.c===k&&p.rem>0){const d=Math.abs(t-cross(p));if(d<bd){bd=d;best_=p}}
+ if(best_){const perfect=bd<0.07;score+=(perfect?100:50)*(1+Math.floor(combo/10));combo++;hits++;total++;
+  best=Math.max(best,combo);say(perfect?'Perfect!':'Good',perfect?'#ffe14d':'#9be37a',best_,t);
+  best_.rem--;best_.idx++;if(best_.rem===0)best_.done=t;tick(k==='r'?660:880,.08,.12)}
+ else{combo=0;fx.push({text:'x',color:'#888',x:480,t});tick(150,.1,.1)}
+}
+addEventListener('keydown',e=>{
+ if(e.repeat)return;const k=e.key.toLowerCase();
+ if(state!=='play'&&(k===' '||k==='enter')){start();return}
+ if(k==='r'||k==='b'){held[k]=true;press(k)}});
+addEventListener('keyup',e=>{const k=e.key.toLowerCase();if(k==='r'||k==='b')held[k]=false});
+addEventListener('blur',()=>{held.r=held.b=false});
+for(const k of ['r','b']){const el=document.getElementById('p'+k);
+ el.addEventListener('pointerdown',e=>{e.preventDefault();if(state!=='play'){start();return}held[k]=true;press(k)});
+ const up=()=>held[k]=false;el.addEventListener('pointerup',up);el.addEventListener('pointerleave',up)}
+cv.addEventListener('pointerdown',()=>{if(state!=='play')start()});
+
+function update(t){
+ spawn(t);
+ for(const p of ps)if(p.rem>0&&t>cross(p)+WIN){p.rem--;p.idx++;combo=0;hp--;total++;say('Miss','#ff6b9a',p,t);if(p.rem===0)p.done=t}
+ ps=ps.filter(p=>pos(p,t).x<W+40&&(p.done===null||t-p.done<.8));
+ fx=fx.filter(f=>t-f.t<.7);
+ const b=Math.floor((t-2.4+T/2)/T);if(b!==lastBeat&&t>1.5){lastBeat=b;tick(1000,.02,.015)}
+ if(hp<=0)state='over';
+}
+
+function draw(t){
+ ctx.clearRect(0,0,W,H);
+ const lc=held.r&&held.b?'#b45cff':held.r?COL.r:held.b?COL.b:'#4a4f66';
+ ctx.strokeStyle=lc;ctx.lineWidth=held.r||held.b?7:3;ctx.shadowColor=lc;ctx.shadowBlur=held.r||held.b?18:0;
+ ctx.globalAlpha=.25;ctx.setLineDash([8,8]);ctx.shadowBlur=0;ctx.beginPath();ctx.moveTo(0,LY);ctx.lineTo(SAFE,LY);ctx.stroke();ctx.setLineDash([]);ctx.globalAlpha=1;
+ ctx.shadowBlur=held.r||held.b?18:0;ctx.beginPath();ctx.moveTo(SAFE,LY);ctx.lineTo(W,LY);ctx.stroke();ctx.shadowBlur=0;
+ for(const p of ps){
+  const q=pos(p,t);ctx.globalAlpha=(p.done===null?1:Math.max(0,1-(t-p.done)/.8))*(q.x<SAFE?.4:1);
+  ctx.fillStyle=COL[p.c];ctx.fillRect(q.x-18,q.y-18,36,36);
+  ctx.fillStyle='#fff';ctx.font='bold 22px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';
+  if(p.rem>0)ctx.fillText(p.rem,q.x,q.y+1);
+ }
+ ctx.globalAlpha=1;
+ for(const f of fx){ctx.globalAlpha=1-(t-f.t)/.7;ctx.fillStyle=f.color;ctx.font='bold 20px system-ui';
+  ctx.textAlign='center';ctx.fillText(f.text,f.x,LY-(t-f.t)*50-40)}
+ ctx.globalAlpha=1;ctx.textAlign='left';ctx.fillStyle='#e8eaf2';ctx.font='bold 22px system-ui';
+ ctx.fillText('Score '+score,20,34);ctx.fillText('Combo '+combo,20,64);
+ ctx.textAlign='right';ctx.fillText('Lives '+Math.max(hp,0),W-20,34);
+}
+
+function overlay(title,sub){
+ ctx.fillStyle='rgba(14,16,24,.8)';ctx.fillRect(0,0,W,H);ctx.fillStyle='#e8eaf2';ctx.textAlign='center';
+ ctx.font='bold 48px system-ui';ctx.fillText(title,W/2,H/2-30);ctx.font='20px system-ui';ctx.fillStyle='#8a90a6';
+ sub.split('\n').forEach((s,i)=>ctx.fillText(s,W/2,H/2+20+i*30));
+}
+
+function loop(){
+ if(state==='play'){const t=now();update(t);draw(t)}
+ else{draw(state==='over'?now():0);
+  if(state==='menu')overlay('Wave Rhythm','Red squares ride cos(x), blue ride -cos(x).\nHit R or B each time one crosses the line.\nPress Space / Enter or tap to start');
+  else overlay('Game Over','Score '+score+'  |  Best combo '+best+'  |  Accuracy '+(total?Math.round(100*hits/total):0)+'%\nPress Space / Enter or tap to retry')}
+ requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
